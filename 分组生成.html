@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>分组生成</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+
+      header {
+        background-color: #4caf50;
+        color: white;
+        text-align: center;
+        padding: 15px;
+        font-size: 24px;
+      }
+
+      .input-container {
+        display: flex;
+        flex: 1;
+        margin: 10px;
+      }
+
+      .input-box {
+        flex: 1;
+        padding: 30px;
+        border: 1px solid #ccc;
+        resize: none; /* 禁止文本框调整大小 */
+        font-size: 16px;
+        margin: 5px;
+      }
+
+      .button-container {
+        margin: 10px;
+        display: flex;
+        justify-content: center;
+      }
+
+      .button {
+        background-color: #008cba;
+        border: none;
+        color: white;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 16px;
+        cursor: pointer;
+        padding: 15px 70px;
+        margin: 0 5px; /* 在按钮之间添加一些间距 */
+      }
+
+      .output-box {
+        padding: 30px;
+        border: 1px solid #ccc;
+        background-color: #f4f4f4;
+        flex: 1;
+        resize: none; /* 禁止文本框调整大小 */
+        font-size: 16px;
+        margin: 5px;
+      }
+
+      @media (max-width: 768px) {
+        .input-container {
+          flex-direction: column; /* 在屏幕宽度小于 768px 时垂直排列 */
+        }
+
+        .input-box,
+        .output-box {
+          min-height: 100px; /* 调整最小高度以适应内容 */
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>职称评审随机分组生成</header>
+    <div class="input-container">
+      <textarea
+        class="input-box"
+        id="inputText"
+        rows="15"
+        placeholder="请输入内容..."
+      ></textarea>
+      <textarea
+        class="output-box"
+        id="outputText"
+        rows="15"
+        placeholder="输出信息..."
+        readonly
+      >
+这里是生成的分组情况。
+    
+    左侧输入格式：
+        组长和组的数量
+        组员数量
+        （可以实现M个组和N个组员的搭配）
+
+        名字 省份 [外部]
+        （……共5行，五位组长信息，分别对应一组、二组、...、五组，其中含1～5个外部专家，外部专家总数为5）
+
+        名字 省份 [外部]
+        （……共20行，20位组员信息，，其中含0～4个外部专家，外部专家总数为5）
+
+        省份 省份 [省份...]
+        （……共5行，5个组的回避省份）
+
+    左侧输入示例（可复制到左边尝试）：
+5
+22
+
+孙某某 总局
+黄某人 北京
+焦某人 山西
+殷专家 江苏
+张三丰 海南 外部
+
+钱大师 浙江 外部
+田专家 北京 
+牛专家 上海 外部
+王教授 上海 
+魏专家 总局 
+张处长 北京 外部
+李科长 宁夏 
+陆主任 广西 
+吴院长 福建 外部
+牟大夫 辽宁 
+王某 大连 
+徐主任 山东 
+郭科长 天津 
+宋得 内蒙 
+王五 大连 
+lily 宁波 
+张乔 安徽 
+荆乐 北京 
+张大伟 吉林 
+betty 厦门 
+何大 北京 外部
+新得 陕西 外部
+
+河北 吉林 陕西 宁夏 重庆
+浙江 厦门 山东 江苏 青岛
+北京 上海 深圳 广东 宁波 河南 
+江西 湖南 大连 海南 云南
+安徽 四川 西藏 内蒙</textarea
+      >
+    </div>
+    <div class="button-container">
+      <button class="button" onclick="run()">生成</button>
+      <button class="button" onclick="exportText()">导出</button>
+    </div>
+
+    <script>
+      class GroupGeneration {
+        constructor() {
+          this.M = -1; // 组和组长数
+          this.N = -1; // 组员数
+          this.external_num = 0; // 外部专家总数
+
+          this.group_person_lower_limit = 1;
+          this.group_person_upper_limit = -1; // 每组人数的上限
+          this.group_external_lower_limit = 1; // 每组外部专家下限
+          this.group_external_upper_limit = -1; // 每组外部专家上限
+
+          this.group_member_touch_upper_limit = -1; // 最大触顶组数
+
+          this.assigned_groups = new Map();
+          this.group_leaders = [];
+          this.group_members = [];
+          this.groups = [];
+
+          this.group_members_no_external = [];
+          this.group_members_external = [];
+
+          this.max_group_external_touch_upper_limit = -1;
+          this.max_group_member_touch_upper_limit = -1;
+        }
+
+        parseInput(inputText) {
+          const lines = inputText
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line !== "");
+
+          this.M = parseInt(lines[0]); // 组长和组的数量
+          this.N = parseInt(lines[1]); // 组员数量
+
+          lines.slice(2).forEach((line, index) => {
+            const parts = line.split(" ");
+            const is_external = parts.length === 3 && parts[2] === "外部";
+
+            if (index < this.M + this.N)
+              if (parts.length != 2 && parts.length != 3)
+                throw "输入错误"
+
+            const person = {
+              name: parts[0],
+              province: parts[1],
+              is_external: is_external,
+            };
+
+            if (index < this.M) {
+              this.group_leaders.push(person);
+            } else if (index < this.M + this.N) {
+              this.group_members.push(person);
+            } else {
+              this.groups.push(parts);
+            }
+
+            if (is_external) this.external_num++;
+          });
+
+          if (this.groups.length != this.M) {
+            throw "输入错误";
+          }
+        }
+
+        formatOutput() {
+          const output = [];
+
+          for (let i = 0; i < this.M; i++) {
+            const group = this.assigned_groups.get(i) || [];
+            const leader = group[0];
+            const members = group.slice(1);
+
+            const leaderOutput = `组长：${leader.name} ${
+              leader.is_external ? "(外部)" : ""
+            }`;
+            const membersOutput = members
+              .map(
+                (member) =>
+                  `${member.name} ${member.is_external ? "(外部)" : ""}`
+              )
+              .join("，");
+
+            output.push(
+              `第${i + 1}组：\t${leaderOutput}；\t组员：${membersOutput}`
+            );
+          }
+
+          return output.join("\n");
+        }
+
+        init() {
+          this.group_person_lower_limit = Math.floor(
+            (this.M + this.N) / this.M
+          );
+          this.group_person_upper_limit = Math.ceil((this.M + this.N) / this.M);
+          this.group_external_upper_limit = Math.ceil(
+            this.external_num / this.M
+          );
+          this.max_group_external_touch_upper_limit =
+            this.external_num % this.M === 0
+              ? this.M
+              : this.external_num % this.M;
+          this.max_group_member_touch_upper_limit =
+            (this.M + this.N) % this.M === 0
+              ? this.M
+              : (this.M + this.N) % this.M;
+
+          this.group_members_external = this.group_members.filter(
+            (mem) => mem.is_external
+          );
+          this.group_members_no_external = this.group_members.filter(
+            (mem) => !mem.is_external
+          );
+        }
+
+        assignBacktrace(index, people, canAssignFunc) {
+          if (index === people.length) {
+            return true;
+          }
+
+          const person = people[index];
+
+          for (let group_id = 0; group_id < this.M; group_id++) {
+            if (canAssignFunc(person, group_id)) {
+              if (!this.assigned_groups.has(group_id)) {
+                this.assigned_groups.set(group_id, []);
+              }
+              this.assigned_groups.get(group_id).push(person);
+              if (this.assignBacktrace(index + 1, people, canAssignFunc)) {
+                return true;
+              } else {
+                this.assigned_groups.get(group_id).pop();
+              }
+            }
+          }
+
+          return false;
+        }
+
+        assignLeaders() {
+          const canAssignFunc = (person, group_id) => {
+            if (this.groups[group_id].includes(person.province)) return false;
+            if ((this.assigned_groups.get(group_id) || []).length >= 1)
+              return false;
+            return true;
+          };
+
+          return this.assignBacktrace(0, this.group_leaders, canAssignFunc);
+        }
+
+        assignExternals() {
+          const getGroupTouchLimit = (group_id) => {
+            let used_group_touched_num = 0;
+            let is_this_group_touched = false;
+
+            for (let group_id_ = 0; group_id_ < this.M; group_id_++) {
+              const group = this.assigned_groups.get(group_id_) || [];
+              const external_num = group.filter(
+                (person) => person.is_external
+              ).length;
+
+              if (external_num >= this.group_external_upper_limit) {
+                used_group_touched_num++;
+              }
+
+              if (
+                group_id_ === group_id &&
+                external_num >= this.group_external_upper_limit
+              ) {
+                is_this_group_touched = true;
+              }
+            }
+
+            return [is_this_group_touched, used_group_touched_num];
+          };
+
+          const getGroupExternalNum = (group_id) => {
+            const group = this.assigned_groups.get(group_id) || [];
+            return group.filter((person) => person.is_external).length;
+          };
+
+          const canAssignFunc = (person, group_id) => {
+            if (this.groups[group_id].includes(person.province)) return false;
+
+            const this_group_external_num = getGroupExternalNum(group_id);
+            if (this_group_external_num >= this.group_external_upper_limit)
+              return false;
+
+            if (
+              (this.assigned_groups.get(group_id) || []).length >=
+              this.group_person_upper_limit
+            )
+              return false;
+
+            const [is_this_group_touched, used_group_touched_num] =
+              getGroupTouchLimit(group_id);
+            if (
+              used_group_touched_num >=
+              this.max_group_external_touch_upper_limit
+            )
+              return false;
+
+            return true;
+          };
+
+          return this.assignBacktrace(
+            0,
+            this.group_members_external,
+            canAssignFunc
+          );
+        }
+
+        assignMembers() {
+          const getGroupTouchLimit = (group_id) => {
+            let used_group_touched_num = 0;
+            let is_this_group_touched = false;
+
+            for (let group_id_ = 0; group_id_ < this.M; group_id_++) {
+              const group = this.assigned_groups.get(group_id_) || [];
+              const member_num = group.length;
+
+              if (member_num >= this.group_person_upper_limit) {
+                used_group_touched_num++;
+              }
+
+              if (
+                group_id_ === group_id &&
+                member_num >= this.group_person_upper_limit
+              ) {
+                is_this_group_touched = true;
+              }
+            }
+
+            return [is_this_group_touched, used_group_touched_num];
+          };
+
+          const canAssignFunc = (person, group_id) => {
+            if (this.groups[group_id].includes(person.province)) return false;
+
+            if (
+              (this.assigned_groups.get(group_id) || []).length >=
+              this.group_person_upper_limit
+            )
+              return false;
+
+            const [is_this_group_touched, used_group_touched_num] =
+              getGroupTouchLimit(group_id);
+            if (
+              used_group_touched_num >= this.max_group_member_touch_upper_limit
+            )
+              return false;
+
+            return true;
+          };
+
+          return this.assignBacktrace(
+            0,
+            this.group_members_no_external,
+            canAssignFunc
+          );
+        }
+
+        shuffle() {
+          this.group_leaders.sort(() => Math.random() - 0.5);
+          this.group_members.sort(() => Math.random() - 0.5);
+        }
+
+        check() {
+          var person_num = 0;
+          var lowest_group_person_num = this.M * this.N * 100;
+          var highest_group_person_num = -1;
+          for (let group_id = 0; group_id < this.M; group_id++) {
+            const group = this.assigned_groups.get(group_id) || [];
+            if (group.length > this.group_person_upper_limit) return false;
+            if (group.length < this.group_person_lower_limit) return false;
+
+            let external_num = 0;
+            for (const person of group) {
+              person_num += 1;
+              if (person.is_external) external_num++;
+              if (this.groups[group_id].includes(person.province)) return false;
+            }
+
+            if (external_num < 1) return false;
+
+            if (group.length > highest_group_person_num)
+              highest_group_person_num = group.length;
+            if (group.length < lowest_group_person_num)
+              lowest_group_person_num = group.length;
+          }
+          if (person_num != this.M + this.N) return false;
+
+          if (highest_group_person_num - lowest_group_person_num > 1)
+            return False;
+          return true;
+        }
+
+        randomWay(seed) {
+          while (true) {
+            this.shuffle(seed);
+            this.assigned_groups = new Map();
+            for (let i = 0; i < this.M; i++) {
+              this.assigned_groups.set(i, [this.group_leaders[i]]);
+            }
+
+            for (let i = 0; i < this.N; i++) {
+              const group_id = i % this.M;
+              const group = this.assigned_groups.get(group_id);
+              group.push(this.group_members[i]);
+            }
+
+            if (this.check()) return;
+          }
+        }
+
+        run(text) {
+          this.parseInput(text);
+          this.shuffle();
+          this.init();
+
+          if (this.assignLeaders() == false) {
+            return "无法找到匹配的分配方式";
+          }
+          if (this.assignExternals() == false) {
+            return "无法找到匹配的分配方式";
+          }
+          if (this.assignMembers() == false) {
+            return "无法找到匹配的分配方式";
+          }
+
+          var ck = this.check();
+          console.log("自检结果：", ck);
+          if (ck == false) return "无法找到匹配的分配方式";
+
+          return this.formatOutput();
+        }
+      }
+
+      function run() {
+        const groupGeneration = new GroupGeneration();
+        var input = document.getElementById("inputText").value;
+        try {
+          var output = groupGeneration.run(input);
+        } catch (err) {
+          var output = "输入有误";
+        }
+
+        //   var output = "这里是run函数的输出：" + input.toUpperCase(); // 示例函数，将输入文本转换为大写
+        document.getElementById("outputText").value = output;
+      }
+
+      function exportText() {
+        // 获取输出框的内容
+        var textContent = document.getElementById("outputText").value;
+
+        // 创建一个Blob对象，内容类型为plain text
+        var blob = new Blob([textContent], { type: "text/plain" });
+
+        // 创建一个URL对象
+        var url = URL.createObjectURL(blob);
+
+        // 创建一个链接元素
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = "output.txt";
+
+        // 将链接元素添加到DOM中
+        document.body.appendChild(a);
+
+        // 模拟点击链接
+        a.click();
+
+        // 释放URL对象
+        URL.revokeObjectURL(url);
+
+        // 移除链接元素
+        document.body.removeChild(a);
+      }
+    </script>
+  </body>
+</html>
